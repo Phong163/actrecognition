@@ -1,6 +1,6 @@
 prev_time = 0
 count = 0
-size = 256
+size = 192
 agnostic_nms=False
 conf_thres=float(0.5)  # confidence threshold
 iou_thres=float(0.4)  # NMS IOU threshold
