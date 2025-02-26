@@ -4,7 +4,7 @@ import numpy as np
 import onnxruntime as ort
 import tensorflow as tf
 import torch
-from tracker.tracker import BYTETracker
+from tracker.tracker2 import BYTETracker
 import threading
 from utils import *
 from general import  non_max_suppression_modified
