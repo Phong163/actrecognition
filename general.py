@@ -954,8 +954,8 @@ def clip_segments(segments, shape):
 
 def non_max_suppression(
     prediction,
-    conf_thres=0.25,
-    iou_thres=0.45,
+    conf_thres=0.5,
+    iou_thres=0.4,
     classes=None,
     agnostic=False,
     multi_label=False,
@@ -978,6 +978,7 @@ def non_max_suppression(
         
         # print('shape_prediction:',prediction.shape)
     device = prediction.device
+    print(device)
     mps = "mps" in device.type  # Apple MPS
     if mps:  # MPS not fully supported yet, convert tensors to CPU before NMS
         prediction = prediction.cpu()
@@ -992,7 +993,7 @@ def non_max_suppression(
     time_limit = 0.5 + 0.05 * bs  # seconds to quit after
     redundant = True  # require redundant detections
     multi_label &= nc > 1  # multiple labels per box (adds 0.5ms/img)
-    merge = False  # use merge-NMS
+    merge = True  # use merge-NMS
 
     t = time.time()
     mi = 5 + nc  # mask start index
@@ -1065,7 +1066,69 @@ def non_max_suppression(
             break  # time limit exceeded
 
     return output
+def non_max_suppression_modified(
+    detected,
+    conf_thres=0.5,
+    iou_thres=0.4,
+    max_det=300,
+    nm=0,  # number of masks
+):
+    
+    detect = detected[:, :56, :].squeeze().T  # (756, 4)
+    detect = torch.tensor(detect).unsqueeze(0).unsqueeze(0)
+    # keypoints = detected[:, 5:, :].squeeze().T  # (756, 52)
 
+    # Checks
+    assert 0 <= conf_thres <= 1, f"Invalid Confidence threshold {conf_thres}, valid values are between 0.0 and 1.0"
+    assert 0 <= iou_thres <= 1, f"Invalid IoU {iou_thres}, valid values are between 0.0 and 1.0"
+    if isinstance(detect, (list, tuple)):  # Handle YOLOv5 validation output
+        detect = detect[0]  # Select only inference output
+
+
+    bs = detect.shape[0]  # Batch size
+    xc = detect[..., 4] > conf_thres  # Candidates based on confidence
+
+    # Settings
+    max_wh = 7680  # Maximum box width and height
+    max_nms = 30000  # Maximum number of boxes into NMS
+    time_limit = 0.5 + 0.05 * bs  # Seconds to quit after
+
+    t = time.time()
+    mi = 5  # Mask start index (no classes, so 5 is the starting point for masks if any)
+    output = [torch.zeros((0, 5 + nm), device=detect.device)] * bs
+
+    for xi, x in enumerate(detect):  # Image index, image inference
+        x = x[xc[xi]]  # Filter by confidence
+
+        # If no boxes remain, process next image
+        if not x.shape[0]:
+            continue
+
+        # Compute box and confidence
+        box = xywh2xyxy(x[:, :4])  # Convert from (center_x, center_y, width, height) to (x1, y1, x2, y2)
+        conf = x[:, 4:5]  # Confidence scores
+        mask = x[:, mi:]  # Masks (if any)
+
+        # Detections matrix nx5 (xyxy, conf)
+        x = torch.cat((box, conf, mask), 1)  # Combine boxes, confidence, and masks
+
+        # Check shape
+        n = x.shape[0]  # Number of boxes
+        if not n:  # No boxes
+            continue
+        # x = x[x[:, 4].argsort(descending=True)[:max_nms]]  # Sort by confidence and limit boxes
+
+        # Batched NMS
+        boxes, scores = x[:, :4], x[:, 4]  # Boxes and scores for NMS
+        i = torchvision.ops.nms(boxes, scores, iou_thres)  # Perform NMS
+        i = i[:max_det]  # Limit detections
+
+        output[xi] = x[i]  # Store results
+        if (time.time() - t) > time_limit:
+            LOGGER.warning(f"WARNING ⚠️ NMS time limit {time_limit:.3f}s exceeded")
+            break
+
+    return output
 
 def strip_optimizer(f="best.pt", s=""):  # from utils.general import *; strip_optimizer()
     # Strip optimizer from 'f' to finalize training, optionally save as 's'
